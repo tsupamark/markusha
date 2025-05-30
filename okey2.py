@@ -1,58 +1,52 @@
-import randomimport os
-import random
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message
-from aiogram.utils import executor
+from telegram import Update, Message
+from telegram.ext import Application, MessageHandler, filters, CommandHandler, ContextTypes
 
-API_TOKEN = os.getenv("API_TOKEN")  # Токен берётся из переменных окружения
+# 🔧 Настройки
+BOT_TOKEN = '8098121171:AAGcumK5w_5PAn6Pk-LNafIWSiSstaJdZeA'
+ADMIN_ID = 7756306224  # Замени на свой Telegram user ID
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+# 🟢 Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Напиши сюда сообщение, и администратор свяжется с тобой.")
 
-# Простая система баланса
-user_balances = {}
+# 📥 Обработка входящих сообщений от пользователей
+async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    message = update.message
+    text = f"📩 Сообщение от @{user.username or user.id} (ID: {user.id}):\n\n{message.text}"
 
-# Команда /start
-@dp.message_handler(commands=['start'])
-async def start_handler(message: Message):
-    user_id = message.from_user.id
-    user_balances[user_id] = 1000
-    await message.answer("🎰 Добро пожаловать в казино-бот!\nУ тебя 1000 монет.\nИспользуй /spin чтобы играть!")
+    # Пересылаем админу
+    forwarded = await context.bot.send_message(chat_id=ADMIN_ID, text=text)
 
-# Команда /balance
-@dp.message_handler(commands=['balance'])
-async def balance_handler(message: Message):
-    user_id = message.from_user.id
-    balance = user_balances.get(user_id, 0)
-    await message.answer(f"💰 Твой баланс: {balance} монет")
+    # Сохраняем соответствие: id сообщения -> id пользователя
+    context.chat_data[forwarded.message_id] = user.id
 
-# Команда /spin
-@dp.message_handler(commands=['spin'])
-async def spin_handler(message: Message):
-    user_id = message.from_user.id
-    balance = user_balances.get(user_id, 0)
+# 🔁 Ответ администратора
+async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return  # Только админ может отвечать
 
-    if balance < 100:
-        await message.answer("❌ Недостаточно монет для спина (нужно 100).")
+    replied_msg: Message = update.message.reply_to_message
+    if not replied_msg:
         return
 
-    user_balances[user_id] -= 100
-    symbols = ['🍒', '🍋', '🔔', '⭐', '7️⃣']
-    result = [random.choice(symbols) for _ in range(3)]
+    original_user_id = context.chat_data.get(replied_msg.message_id)
+    if not original_user_id:
+        await update.message.reply_text("❗ Не удалось найти получателя.")
+        return
 
-    win = 0
-    if result[0] == result[1] == result[2]:
-        win = 500
-        user_balances[user_id] += win
-        outcome = "🎉 Джекпот! Ты выиграл 500 монет!"
-    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
-        win = 200
-        user_balances[user_id] += win
-        outcome = "✨ Малый выигрыш! Ты получил 200 монет."
-    else:
-        outcome = "😢 Ничего не выпало."
+    await context.bot.send_message(chat_id=original_user_id, text=f"📬 Ответ от администратора:\n\n{update.message.text}")
 
-    await message.answer(f"{' | '.join(result)}\n{outcome}\n💰 Баланс: {user_balances[user_id]} монет")
+# 🚀 Запуск
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
 
-if __name__ == '__main__':
-    executor.start_polling(dp)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin))
+    app.add_handler(MessageHandler(filters.TEXT & filters.USER(ADMIN_ID), handle_admin_reply))
+
+    print("Бот запущен...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
